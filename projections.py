@@ -1,54 +1,47 @@
-import torch
+import jax.numpy as jnp
 import numpy as np
+from jax.ops import index, index_update
 
+#-------FOURIER LENGTH SCALE-----------#
+def computeFourierMap(mesh, fourierMap):
+  # compute the map
+  coordnMapSize = (mesh.ndim, fourierMap['numTerms']);
+  freqSign = np.random.choice([-1.,1.], coordnMapSize)
+  stdUniform = np.random.uniform(0.,1., coordnMapSize) 
+  wmin = 1./(2*fourierMap['maxRadius']*mesh.elemSize[0])
+  wmax = 1./(2*fourierMap['minRadius']*mesh.elemSize[0]) # w~1/R
+  wu = wmin +  (wmax - wmin)*stdUniform
+  coordnMap = np.einsum('ij,ij->ij', freqSign, wu)
+  return coordnMap
+#-----------------#
+def applyFourierMap(xy, fourierMap):
+  if(fourierMap['isOn']):
+    c = jnp.cos(2*np.pi*jnp.einsum('ij,jk->ik', xy, fourierMap['map']))
+    s = jnp.sin(2*np.pi*jnp.einsum('ij,jk->ik', xy, fourierMap['map']))
+    xy = jnp.concatenate((c, s), axis = 1)
+  return xy
 
-class Projections:
+#-------DENSITY PROJECTION-----------#
 
-    def __init__(self, symMap, fourierEncoding, densityProj, device):
-        self.symMap = symMap
-        self.fourierEncoding = fourierEncoding
-        self.densityProj = densityProj
-        if(self.fourierEncoding['isOn']):
-            coordnMap = np.zeros((2, fourierEncoding['numTerms']))
-            for i in range(coordnMap.shape[0]):
-                for j in range(coordnMap.shape[1]):
-                    coordnMap[i, j] = np.random.choice([-1., 1.]) * \
-                        np.random.uniform(1./(2*fourierEncoding['maxRadius']),\
-                                          1./(2*fourierEncoding['minRadius']))
+def applyDensityProjection(x, densityProj):
+  if(densityProj['isOn']):
+    b = densityProj['sharpness']
+    nmr = np.tanh(0.5*b) + jnp.tanh(b*(x-0.5))
+    x = 0.5*nmr/np.tanh(0.5*b)
+  return x
 
-            self.fourierEncoding['map'] = \
-                torch.tensor(coordnMap).float().to(device)
-    #-------------------------#
-
-    def applyFourierEncoding(self, x):
-        if(self.fourierEncoding['isOn']):
-            c = torch.cos(2*np.pi*torch.matmul(x, self.fourierEncoding['map']))
-            s = torch.sin(2*np.pi*torch.matmul(x, self.fourierEncoding['map']))
-            xv = torch.cat((c, s), axis=1)
-            return xv
-        return x
-    #--------------------------#
-
-    def applyDensityProjection(self, x):
-        if(self.densityProj['isOn']):
-            b = self.densityProj['sharpness']
-            nmr = np.tanh(0.5*b) + torch.tanh(b*(x-0.5))
-            x = 0.5*nmr/np.tanh(0.5*b)
-        return x
-    #--------------------------#
-
-    def applySymmetry(self, x):
-        if(self.symMap['YAxis']['isOn']):
-            xv = self.symMap['YAxis']['midPt'] + \
-                torch.abs(x[:, 0] - self.symMap['YAxis']['midPt'])
-        else:
-            xv = x[:, 0]
-        if(self.symMap['XAxis']['isOn']):
-            yv = self.symMap['XAxis']['midPt'] + \
-                torch.abs(x[:, 1] - self.symMap['XAxis']['midPt'])
-        else:
-            yv = x[:, 1]
-        x = torch.transpose(torch.stack((xv, yv)), 0, 1)
-        return x
-    #--------------------------#
-    
+#-------SYMMETRY-----------#
+def applySymmetry(x, symMap):
+  if(symMap['YAxis']['isOn']):
+    xv = index_update( x[:,0], index[:], symMap['YAxis']['midPt'] \
+                          + jnp.abs(x[:,0] - symMap['YAxis']['midPt']) )
+  else:
+    xv = x[:, 0]
+  if(symMap['XAxis']['isOn']):
+    yv = index_update( x[:,1], index[:], symMap['XAxis']['midPt'] \
+                          + jnp.abs(x[:,0] - symMap['XAxis']['midPt']) )
+  else:
+    yv = x[:, 1]
+  x = jnp.stack((xv, yv)).T
+  return x
+#--------------------------#

@@ -14,9 +14,8 @@ import matplotlib.pyplot as plt
 from matplotlib import colors
 from examples import getExampleBC
 from Mesher import RectangularGridMesher
-
-rand_key = random.PRNGKey(0) # reproducibility
-
+from projections import computeFourierMap, applyFourierMap, applySymmetry
+from network import TopNet
 
 ndim, nelx, nely = 2, 40, 20
 elemSize = np.array([1., 1.])
@@ -29,6 +28,7 @@ mesh = RectangularGridMesher(ndim, nelx, nely, elemSize, bcSettings);
 # observe that xyElems is an array from jax. 
 # This makes tracking the variable possible
 xyElems = jnp.array(mesh.generatePoints())
+xyElems = applySymmetry(xyElems, symMap)
 print(xyElems.shape)
 
 """### Material"""
@@ -70,26 +70,7 @@ The resulting structure might be symmetric about an axis. However, owing to the 
 
 """### Neural Network"""
 
-# Let us now define the actual NN. We consider a fully connected NN
-# with LeakyRelu as the activation and a sigmoid in the output layer
-def elementwise(fun, **fun_kwargs):
-    """Layer that applies a scalar function elementwise on its inputs."""
-    init_fun = lambda rng, input_shape: (input_shape, ())
-    apply_fun = lambda params, inputs, **kwargs: fun(inputs, **fun_kwargs)
-    return init_fun, apply_fun
-Swish = elementwise(nn.swish)
-
-def makeNetwork(nnspec):
-  # JAX network definition
-  layers = []
-  for i in range(nnspec['numLayers']-1):
-    layers.append(stax.Dense(nnspec['numNeuronsPerLayer']))
-    layers.append(Swish)#(stax.LeakyRelu)
-  layers.append(stax.Dense(nnspec['outputDim']))
-  layers.append(stax.Sigmoid)
-  return stax.serial(*layers)
-
-nnspec = {'outputDim':1, 'numNeuronsPerLayer':20,  'numLayers':2}
+nnSettings = {'outputDim':1, 'numNeuronsPerLayer':20,  'numLayers':2}
 
 """### FE Solver CM
 
@@ -138,24 +119,7 @@ class FESolver:
 Input and output projections help us define among many geometric, manufacturing constraints.
 """
 
-#-------FOURIER LENGTH SCALE-----------#
-def computeFourierMap(mesh, fourierMap):
-  # compute the map
-  coordnMapSize = (mesh.ndim, fourierMap['numTerms']);
-  freqSign = np.random.choice([-1.,1.], coordnMapSize)
-  stdUniform = np.random.uniform(0.,1., coordnMapSize) 
-  wmin = 1./(2*fourierMap['maxRadius']*mesh.elemSize[0])
-  wmax = 1./(2*fourierMap['minRadius']*mesh.elemSize[0]) # w~1/R
-  wu = wmin +  (wmax - wmin)*stdUniform
-  coordnMap = np.einsum('ij,ij->ij', freqSign, wu)
-  return coordnMap
-#-----------------#
-def applyFourierMap(xy, fourierMap):
-  if(fourierMap['isOn']):
-    c = jnp.cos(2*np.pi*jnp.einsum('ij,jk->ik', xyElems, fourierMap['map']))
-    s = jnp.sin(2*np.pi*jnp.einsum('ij,jk->ik', xyElems, fourierMap['map']))
-    xy = jnp.concatenate((c, s), axis = 1)
-  return xy
+
 
 """### Optimization
 Finally, we are now ready to express the optimization problem
@@ -171,25 +135,30 @@ fourierMap = {'isOn': True, 'minRadius':4., \
 fourierMap['map'] = computeFourierMap(mesh, fourierMap)
 
 
-optimizationParams = {'maxEpochs':450, 'learningRate':0.01, 'desiredVolumeFraction':0.5,\
+optimizationParams = {'maxEpochs':100, 'learningRate':0.01, 'desiredVolumeFraction':0.5,\
                      'lossMethod':lossMethod}
 
 def optimizeDesign(xy, optParams, mesh, material, bc, fourierMap):
   FE = FESolver(mesh, material, bc)
   # input projection
   if(fourierMap['isOn']):
-   xy = applyFourierMap(xy, fourierMap)
+    xy = applyFourierMap(xy, fourierMap)
+    nnSettings['inputDim'] = 2*fourierMap['numTerms']
+  else:
+    nnSettings['inputDim'] = FE.mesh.ndim
+  
+  
+ 
   # make the NN
-  init_fn, applyNN = makeNetwork(nnspec);
-  fwdNN = jit(lambda nnwts, x: applyNN(nnwts, x))
-  _, params = init_fn(rand_key, (-1, xy.shape[1]))
+  topNet = TopNet(nnSettings)
+
   # optimizer
   opt_init, opt_update, get_params = optimizers.adam(optParams['learningRate'])
-  opt_state = opt_init(params)
+  opt_state = opt_init(topNet.wts)
   opt_update = jit(opt_update)
   
   # fwd once to get J0-scaling param
-  density0  = fwdNN(get_params(opt_state), xy)
+  density0  = topNet.forward(get_params(opt_state), xy)
   J0 = FE.objectiveHandle(density0.reshape(-1))
 
   def getYoungsModulus(density):
@@ -200,7 +169,7 @@ def optimizeDesign(xy, optParams, mesh, material, bc, fourierMap):
   #-----------------------#
   # loss function
   def computeLoss(nnwts):
-    density  = 0.01 + fwdNN(nnwts, xy)
+    density  = 0.01 + topNet.forward(nnwts, xy)
     Y = getYoungsModulus(density)
     volcons = (jnp.mean(density)/optParams['desiredVolumeFraction'])- 1.
     J = FE.objectiveHandle(Y.reshape(-1))
@@ -227,7 +196,7 @@ def optimizeDesign(xy, optParams, mesh, material, bc, fourierMap):
                 opt_state)
 
     if(epoch%10 == 0):
-      density = fwdNN(get_params(opt_state), xy)
+      density = topNet.forward(get_params(opt_state), xy)
       Y = getYoungsModulus(density)
       J = FE.objectiveHandle(Y.reshape(-1))
       volf= jnp.mean(density)
@@ -236,14 +205,15 @@ def optimizeDesign(xy, optParams, mesh, material, bc, fourierMap):
       status = 'epoch {:d}, J {:.2E}, vf {:.2F}'.format(epoch, J/J0, volf);
       print(status)
       if(epoch%30 == 0):
-        plt.figure();
-        plt.imshow(-jnp.flipud(density.reshape((nelx, nely)).T),\
-                  cmap='gray')
-        plt.title(status)
-        plt.pause(0.001)
-        plt.show()
+        FE.mesh.plotFieldOnMesh(density, status)
+        # plt.figure();
+        # plt.imshow(-jnp.flipud(density.reshape((nelx, nely)).T),\
+        #           cmap='gray')
+        # plt.title(status)
+        # plt.pause(0.001)
+        # plt.show()
 
-  return fwdNN, get_params(opt_state)
+  return topNet, get_params(opt_state)
 
 """# Run"""
 bc = mesh.bc

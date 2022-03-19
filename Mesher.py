@@ -119,4 +119,5 @@ class RectangularGridMesher:
                    cmap='gray', interpolation='none')
         plt.axis('Equal')
         plt.grid(False)
+        plt.title(titleStr)
         plt.pause(0.01)
