@@ -16,7 +16,8 @@ from examples import getExampleBC
 from Mesher import RectangularGridMesher
 from projections import computeFourierMap, applyFourierMap, applySymmetry
 from network import TopNet
-
+from FE_Solver import JAXSolver
+#%%
 ndim, nelx, nely = 2, 40, 20
 elemSize = np.array([1., 1.])
 
@@ -62,68 +63,12 @@ def getD0(material):
 material['D0'] = getD0(material)
 
 
-"""### Symmetry
-
-The resulting structure might be symmetric about an axis. However, owing to the nonlinearity of the NN this may not be enforced implicitly. We therefore explicitly enforce symmetry by transforming the coordinates
-
-"""
-
-"""### Neural Network"""
 
 nnSettings = {'outputDim':1, 'numNeuronsPerLayer':20,  'numLayers':2}
 
-"""### FE Solver CM
-
-We now turn our attention to defining functions that are needed for solving the system. We use jit to speed up the computation
-"""
-
-class FESolver:
-  def __init__(self, mesh, material, bc):
-    self.mesh = mesh
-    self.bc = bc
-    self.material = material
-    self.objectiveHandle = jit(self.objective)
-  #-----------------------# 
-  def objective(self, Y):
-    @jit
-    def assembleK(Y):
-      K = jnp.zeros((self.mesh.ndof, self.mesh.ndof))
-      kflat_t = (self.material['D0'].flatten()[np.newaxis]).T 
-      sK = (kflat_t*Y).T.flatten()
-      K = jax.ops.index_add(K, self.mesh.nodeIdx, sK)
-      return K
-    #-----------------------#
-    @jit
-    def solve(K):
-      # eliminate fixed dofs for solving sys of eqns
-      u_free = jax.scipy.linalg.solve(K[self.bc['free'],:][:,self.bc['free']], \
-              self.bc['force'][self.bc['free']], sym_pos = True, check_finite=False);
-      u = jnp.zeros((self.mesh.ndof))
-      u = jax.ops.index_add(u, self.bc['free'], u_free.reshape(-1)) # homog bc wherev fixed
-      return u
-    #-----------------------#
-    @jit
-    def computeCompliance(K, u):
-      J = jnp.dot(self.bc['force'].reshape(-1).T, u)
-      return J
-    #-----------------------#
-    K = assembleK(Y)
-    u = solve(K)
-    J = computeCompliance(K, u)
-    return J
-
-"""# Opt
-
-### Projections
-
-Input and output projections help us define among many geometric, manufacturing constraints.
-"""
 
 
 
-"""### Optimization
-Finally, we are now ready to express the optimization problem
-"""
 
 # Optimization params
 lossMethod = {'type':'penalty', 'alpha0':0.05, 'delAlpha':0.05}
@@ -138,8 +83,8 @@ fourierMap['map'] = computeFourierMap(mesh, fourierMap)
 optimizationParams = {'maxEpochs':100, 'learningRate':0.01, 'desiredVolumeFraction':0.5,\
                      'lossMethod':lossMethod}
 
-def optimizeDesign(xy, optParams, mesh, material, bc, fourierMap):
-  FE = FESolver(mesh, material, bc)
+def optimizeDesign(xy, optParams, mesh, material, fourierMap):
+  FE = JAXSolver(mesh, material)
   # input projection
   if(fourierMap['isOn']):
     xy = applyFourierMap(xy, fourierMap)
@@ -206,15 +151,8 @@ def optimizeDesign(xy, optParams, mesh, material, bc, fourierMap):
       print(status)
       if(epoch%30 == 0):
         FE.mesh.plotFieldOnMesh(density, status)
-        # plt.figure();
-        # plt.imshow(-jnp.flipud(density.reshape((nelx, nely)).T),\
-        #           cmap='gray')
-        # plt.title(status)
-        # plt.pause(0.001)
-        # plt.show()
-
   return topNet, get_params(opt_state)
 
 """# Run"""
-bc = mesh.bc
-network, nnwts = optimizeDesign(xyElems, optimizationParams, mesh, material, bc, fourierMap)
+
+network, nnwts = optimizeDesign(xyElems, optimizationParams, mesh, material, fourierMap)
