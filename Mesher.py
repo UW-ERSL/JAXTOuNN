@@ -6,7 +6,7 @@ import jax
 class RectangularGridMesher:
     #--------------------------#
     def __init__(self, ndim, nelx, nely, elemSize, bcSettings):
-        self.meshType = 'gridMesh';
+        self.meshType = 'gridMesh'
         self.ndim = ndim;
         self.nelx = nelx;
         self.nely = nely;

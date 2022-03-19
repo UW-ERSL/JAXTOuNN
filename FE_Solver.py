@@ -8,13 +8,22 @@ class JAXSolver:
     self.mesh = mesh
     self.material = material
     self.objectiveHandle = jit(self.objective)
+    self.D0 = self.material.getD0elemMatrix(self.mesh)
   #-----------------------# 
-  def objective(self, Y):
+  def objective(self, density, penal):
+    @jit
+    def getYoungsModulus(density, penal):
+      Y = self.material.matProp['Emin'] + \
+            (self.material.matProp['Emax']-self.material.matProp['Emin'])*\
+              (density+0.001)**penal
+      return Y
+    #-----------------------#
     @jit
     def assembleK(Y):
       K = jnp.zeros((self.mesh.ndof, self.mesh.ndof))
-      kflat_t = (self.material['D0'].flatten()[np.newaxis]).T 
-      sK = (kflat_t*Y).T.flatten()
+      sK = jnp.einsum('e, jk->ejk', Y, self.D0).flatten()
+      # kflat_t = (self.material['D0'].flatten()[np.newaxis]).T 
+      # sK = (kflat_t*Y).T.flatten()
       K = jax.ops.index_add(K, self.mesh.nodeIdx, sK)
       return K
     #-----------------------#
@@ -32,6 +41,7 @@ class JAXSolver:
       J = jnp.dot(self.mesh.bc['force'].reshape(-1).T, u)
       return J
     #-----------------------#
+    Y = getYoungsModulus(density, penal)
     K = assembleK(Y)
     u = solve(K)
     J = computeCompliance(K, u)

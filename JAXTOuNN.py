@@ -17,6 +17,7 @@ from Mesher import RectangularGridMesher
 from projections import computeFourierMap, applyFourierMap, applySymmetry
 from network import TopNet
 from FE_Solver import JAXSolver
+from material import Material
 #%%
 ndim, nelx, nely = 2, 40, 20
 elemSize = np.array([1., 1.])
@@ -37,31 +38,10 @@ print(xyElems.shape)
 #Next we define the relevant material property. 
 # We are concerned only with structural mech
 # at the moment. penal here refers to the SIMP penalization constant
-material = {'Emax':1., 'Emin':1e-3, 'nu':0.3, 'penal':1.}
+matProp = {'physics':'structural', 'Emax':1.0, 'nu':0.3, 'Emin':1e-3}
+material = Material(matProp)
 
 # with the material defined, we can now calculate the base constitutive matrix
-def getD0(material):
-  # the base constitutive matrix assumes unit 
-  #area element with E = 1. and nu prescribed.
-  # the material is also assumed to be isotropic.
-  # returns a matrix of size (8X8)
-  E = 1.
-  nu = material['nu'];
-  k = np.array([1/2-nu/6,1/8+nu/8,-1/4-nu/12,-1/8+3*nu/8,\
-                  -1/4+nu/12,-1/8-nu/8,nu/6,1/8-3*nu/8])
-  KE = \
-  E/(1-nu**2)*np.array([ [k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7]],
-  [k[1], k[0], k[7], k[6], k[5], k[4], k[3], k[2]],
-  [k[2], k[7], k[0], k[5], k[6], k[3], k[4], k[1]],
-  [k[3], k[6], k[5], k[0], k[7], k[2], k[1], k[4]],
-  [k[4], k[5], k[6], k[7], k[0], k[1], k[2], k[3]],
-  [k[5], k[4], k[3], k[2], k[1], k[0], k[7], k[6]],
-  [k[6], k[3], k[4], k[1], k[2], k[7], k[0], k[5]],
-  [k[7], k[2], k[1], k[4], k[3], k[6], k[5], k[0]] ])
-  return KE
-
-material['D0'] = getD0(material)
-
 
 
 nnSettings = {'outputDim':1, 'numNeuronsPerLayer':20,  'numLayers':2}
@@ -91,12 +71,10 @@ def optimizeDesign(xy, optParams, mesh, material, fourierMap):
     nnSettings['inputDim'] = 2*fourierMap['numTerms']
   else:
     nnSettings['inputDim'] = FE.mesh.ndim
-  
-  
- 
+
   # make the NN
   topNet = TopNet(nnSettings)
-
+  penal = 1
   # optimizer
   opt_init, opt_update, get_params = optimizers.adam(optParams['learningRate'])
   opt_state = opt_init(topNet.wts)
@@ -104,20 +82,16 @@ def optimizeDesign(xy, optParams, mesh, material, fourierMap):
   
   # fwd once to get J0-scaling param
   density0  = topNet.forward(get_params(opt_state), xy)
-  J0 = FE.objectiveHandle(density0.reshape(-1))
+  J0 = FE.objectiveHandle(density0.reshape(-1), penal)
 
-  def getYoungsModulus(density):
-    material['penal'] = min(8., 1. + epoch*0.02)
-    Y = material['Emin'] + \
-          (material['Emax']-material['Emin'])*(density+0.001)**material['penal']
-    return Y
-  #-----------------------#
+
   # loss function
   def computeLoss(nnwts):
+    penal = min(8.0, 1. + epoch*0.02)
     density  = 0.01 + topNet.forward(nnwts, xy)
-    Y = getYoungsModulus(density)
+    # Y = getYoungsModulus(density)
     volcons = (jnp.mean(density)/optParams['desiredVolumeFraction'])- 1.
-    J = FE.objectiveHandle(Y.reshape(-1))
+    J = FE.objectiveHandle(density.reshape(-1), penal)
 
     if(optParams['lossMethod']['type'] == 'penalty'):
       alpha = optParams['lossMethod']['alpha0'] + \
@@ -142,8 +116,8 @@ def optimizeDesign(xy, optParams, mesh, material, fourierMap):
 
     if(epoch%10 == 0):
       density = topNet.forward(get_params(opt_state), xy)
-      Y = getYoungsModulus(density)
-      J = FE.objectiveHandle(Y.reshape(-1))
+      # Y = getYoungsModulus(density)
+      J = FE.objectiveHandle(density.reshape(-1), penal)
       volf= jnp.mean(density)
       if(epoch == 10):
         J0 = J;
