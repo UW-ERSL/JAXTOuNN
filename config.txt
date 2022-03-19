@@ -28,7 +28,6 @@ mu = 1.01
 
 [OPTIMIZATION]
 desiredVolumeFraction = 0.5
-allowedMeanSDF = 4.
 numEpochs = 150
 lr = 1e-2
 gradClip_isOn = True
