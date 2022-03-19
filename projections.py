@@ -39,7 +39,7 @@ def applySymmetry(x, symMap):
     xv = x[:, 0]
   if(symMap['XAxis']['isOn']):
     yv = index_update( x[:,1], index[:], symMap['XAxis']['midPt'] \
-                          + jnp.abs(x[:,0] - symMap['XAxis']['midPt']) )
+                          + jnp.abs(x[:,1] - symMap['XAxis']['midPt']) )
   else:
     yv = x[:, 1]
   x = jnp.stack((xv, yv)).T
