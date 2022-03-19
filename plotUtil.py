@@ -1,7 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 def plotConvergence( convg):
   x = np.array(convg['epoch'])
   for key in convg:    

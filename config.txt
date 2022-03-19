@@ -1,0 +1,35 @@
+[MESH]
+nelx = 40
+nely = 20
+ndim = 2
+elemSize = 1., 1.
+
+
+[MATERIAL]
+E = 1.
+nu = 0.3
+
+
+[TOUNN]
+numLayers = 2
+hiddenDim = 20
+outputDim = 1
+fourier_isOn = True
+fourier_minRadius = 4
+fourier_maxRadius = 80
+fourier_numTerms = 100
+
+[LOSS]
+delAlpha = 0.15
+alpha0 = 0.05
+t0 = 3
+mu = 1.01
+
+
+[OPTIMIZATION]
+desiredVolumeFraction = 0.5
+allowedMeanSDF = 4.
+numEpochs = 150
+lr = 1e-2
+gradClip_isOn = True
+gradClip_clipNorm = 2e-1
