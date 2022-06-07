@@ -11,7 +11,7 @@ class TOuNN:
   def __init__(self, exampleName, mesh, material, nnSettings, symMap, fourierMap):
     self.exampleName = exampleName
     self.FE = JAXSolver(mesh, material)
-    self.xy = self.FE.mesh.elemCenters
+    self.xy = jnp.array(self.FE.mesh.elemCenters)
     self.fourierMap = fourierMap
     if(fourierMap['isOn']):
       nnSettings['inputDim'] = 2*fourierMap['numTerms']

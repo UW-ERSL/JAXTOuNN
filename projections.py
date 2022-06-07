@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
-from jax.ops import index, index_update
+
 
 #-------FOURIER LENGTH SCALE-----------#
 def computeFourierMap(mesh, fourierMap):
@@ -33,13 +33,14 @@ def applyDensityProjection(x, densityProj):
 #-------SYMMETRY-----------#
 def applySymmetry(x, symMap):
   if(symMap['YAxis']['isOn']):
-    xv = index_update( x[:,0], index[:], symMap['YAxis']['midPt'] \
-                          + jnp.abs(x[:,0] - symMap['YAxis']['midPt']) )
+    xv = x[:,0].at[:].set(symMap['YAxis']['midPt']\
+                          + jnp.abs( x[:,0] - symMap['YAxis']['midPt']) )
+
   else:
     xv = x[:, 0]
   if(symMap['XAxis']['isOn']):
-    yv = index_update( x[:,1], index[:], symMap['XAxis']['midPt'] \
-                          + jnp.abs(x[:,1] - symMap['XAxis']['midPt']) )
+    yv = x[:,1].at[:].set(symMap['XAxis']['midPt']\
+                          + jnp.abs( x[:,1] - symMap['XAxis']['midPt']) )
   else:
     yv = x[:, 1]
   x = jnp.stack((xv, yv)).T

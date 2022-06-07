@@ -67,7 +67,7 @@ class RectangularGridMesher:
     
     iK = tuple(np.kron(edofMat,np.ones((n,1))).flatten().astype(int))
     jK = tuple(np.kron(edofMat,np.ones((1,n))).flatten().astype(int))
-    nodeIdx = jax.ops.index[iK,jK]
+    nodeIdx = (iK,jK)
 
 
     elemNodes = np.zeros((self.numElems, self.nodesPerElem));
